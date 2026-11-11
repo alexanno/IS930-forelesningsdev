@@ -1,0 +1,101 @@
+<title>ogr2ogr</title>
+<style>
+/* Layout: smal lesekolonne som en chat-logg; terminalblokker er det mørke aksentet */
+:root{
+  --bg:#f6f7f5; --fg:#1d2321; --muted:#68726e; --line:#dde2df; --card:#ffffff;
+  --user-bg:#e9efec; --accent:#1f6f5c; --term-bg:#14191a; --term-fg:#d7e0dc; --term-dim:#7e8a85;
+  --term-prompt:#6fd0b0; --term-line:#2a3335; --err:#e0766b; --add-bg:#e3f3e8; --del-bg:#f9e5e2;
+  --font-body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --font-head:'IBM Plex Sans',system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101413; --fg:#e4eae7; --muted:#8f9a95; --line:#27302d; --card:#171c1b;
+  --user-bg:#1d2624; --accent:#6fd0b0; --term-bg:#0a0d0d; --term-fg:#d7e0dc; --term-dim:#7e8a85;
+  --term-prompt:#6fd0b0; --term-line:#222a2b; --err:#ef8d83; --add-bg:#173324; --del-bg:#3a1e1b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101413; --fg:#e4eae7; --muted:#8f9a95; --line:#27302d; --card:#171c1b;
+  --user-bg:#1d2624; --accent:#6fd0b0; --term-bg:#0a0d0d; --term-fg:#d7e0dc; --term-dim:#7e8a85;
+  --term-prompt:#6fd0b0; --term-line:#222a2b; --err:#ef8d83; --add-bg:#173324; --del-bg:#3a1e1b; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:15px;line-height:1.6;padding-inline:16px;padding-block:0}
+.wrap{max-width:820px;margin:0 auto;padding-block:32px 72px;display:flex;flex-direction:column;gap:18px}
+header{padding-bottom:18px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+header .kicker{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+header h1{font-size:28px;line-height:1.2;margin:0;font-weight:600;text-wrap:balance}
+header .meta{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 16px}
+.msg{min-width:0}
+.user{background:var(--user-bg);border-radius:10px;padding:12px 16px;align-self:flex-end;max-width:92%;min-width:0}
+.user .who,.asst .who{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.asst{display:flex;flex-direction:column;gap:12px;min-width:0}
+.prose{overflow-wrap:anywhere}
+.prose p{margin:0 0 .75em}.prose p:last-child{margin-bottom:0}
+.prose h1,.prose h2,.prose h3,.prose h4{margin:1em 0 .4em;line-height:1.3;font-weight:600}
+.prose h1{font-size:20px}.prose h2{font-size:18px}.prose h3,.prose h4{font-size:16px}
+.prose ul,.prose ol{margin:0 0 .75em;padding-left:1.4em}.prose li{margin:.15em 0}
+.prose code{font-family:var(--font-mono);font-size:.88em;background:var(--line);padding:.1em .35em;border-radius:4px}
+.prose pre{background:var(--term-bg);color:var(--term-fg);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0 0 .75em}
+.prose pre code{background:none;padding:0;font-size:12.5px;line-height:1.5;color:inherit}
+.prose blockquote{margin:0 0 .75em;padding-left:12px;border-left:3px solid var(--line);color:var(--muted)}
+.prose a{color:var(--accent)}
+.tablewrap{overflow-x:auto;margin:0 0 .75em}
+.prose table{border-collapse:collapse;font-size:13.5px}
+.prose th,.prose td{border:1px solid var(--line);padding:5px 10px;text-align:left;vertical-align:top}
+.prose th{background:var(--card)}
+.prose hr{border:0;border-top:1px solid var(--line);margin:1em 0}
+details.think{color:var(--muted);font-size:13.5px}
+details.think summary{cursor:pointer;font-style:italic}
+details.think .prose{margin-top:6px;padding-left:12px;border-left:2px solid var(--line)}
+/* verktøykall */
+.tool{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card);min-width:0}
+.tool-head{display:flex;gap:8px;align-items:baseline;padding:8px 12px;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tool-head .name{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.tool-head .desc{color:var(--fg);min-width:0;overflow-wrap:anywhere}
+.tool-head .path{font-family:var(--font-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.term{background:var(--term-bg);color:var(--term-fg);font-family:var(--font-mono);font-size:12.5px;line-height:1.55}
+.term pre{margin:0;padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+.term .cmd{border-bottom:1px solid var(--term-line)}
+.term .cmd pre::before{content:"$ ";color:var(--term-prompt)}
+.term .out pre{color:var(--term-fg)}
+.term .err pre{color:var(--err)}
+.term .lbl{padding:6px 14px 0;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--term-dim)}
+.term .empty{padding:8px 14px;color:var(--term-dim);font-style:italic}
+details.more summary{cursor:pointer;padding:6px 14px;color:var(--term-prompt);font-size:12px;border-top:1px solid var(--term-line)}
+.file pre{margin:0;padding:10px 14px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.5;background:var(--card);color:var(--fg)}
+.diff .l{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+.diff .a{background:var(--add-bg)}.diff .d{background:var(--del-bg)}
+.imgres{padding:10px 14px;background:var(--term-bg)}
+.imgres img{max-width:100%;height:auto;border-radius:6px;display:block}
+.foot{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+@media(max-width:520px){.user{max-width:100%}header h1{font-size:24px}}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<div class="wrap"><header><div class="kicker">Claude Code-samtale</div><h1>ogr2ogr</h1><div class="meta"><span>2. Nov 2026, 21:50</span><span>6 terminalkommandoer</span><span>Claude Code, IS930-forelesningsdev</span></div></header>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>jeg skal konvertere alle layers i brannstasjon geopackage til geojson i epsg:4326. Bruk ogr2ogr.</p></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc">Find brannstasjon geopackage</span></div><div class="term"><div class="cmd"><pre>find /Users/alexandesn/dev -iname &quot;*brannstasjon*&quot; -not -path &quot;*/node_modules/*&quot; 2&gt;/dev/null | head</pre></div><div class="out"><pre>/Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata/brannstasjon.gpkg</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc">List layers in geopackage</span></div><div class="term"><div class="cmd"><pre>cd /Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata &amp;&amp; ogrinfo brannstasjon.gpkg | head -30</pre></div><div class="out"><pre>INFO: Open of `brannstasjon.gpkg&#x27;
+      using driver `GPKG&#x27; successful.
+1: brannstasjon (Point)</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc">Convert every layer to GeoJSON in EPSG:4326</span></div><div class="term"><div class="cmd"><pre>for l in $(ogrinfo -q brannstasjon.gpkg | sed -E &#x27;s/^[0-9]+: (.*) \(.*\)$/\1/&#x27;); do ogr2ogr -f GeoJSON -t_srs EPSG:4326 &quot;$l.geojson&quot; brannstasjon.gpkg &quot;$l&quot; &amp;&amp; echo &quot;ok $l&quot;; done; ls -la *.geojson; ogrinfo -so brannstasjon.geojson brannstasjon | grep -E &quot;Feature Count|ID\[&quot;</pre></div><div class="out"><pre>ok brannstasjon
+-rw-r--r--  1 alexandesn  staff  578 Nov  2 21:51 brannstasjon.geojson
+Feature Count: 3
+        ELLIPSOID[&quot;WGS 84&quot;,6378137,298.257223563,
+    ID[&quot;EPSG&quot;,4326]]</pre></div></div></div><div class="prose"><p>Geopakken <code>brannstasjon.gpkg</code> har bare ett lag, <code>brannstasjon</code> (punkt, 3 features). Det er konvertert til <code>brannstasjon.geojson</code> i EPSG:4326, og jeg sjekket at filen har 3 features og CRS 4326.</p>
+<p>Kommandoen for ett lag:</p>
+<pre><code>ogr2ogr -f GeoJSON -t_srs EPSG:4326 brannstasjon.geojson brannstasjon.gpkg brannstasjon</code></pre>
+<p>Hvis geopakken senere får flere lag, kjører løkken jeg brukte dem alle, og hvert lag blir en egen <code>&lt;lagnavn&gt;.geojson</code>. GeoJSON kan bare ha ett lag per fil.</p></div></section>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>&lt;bash-input&gt;ogr2ogr -f GeoJSON -t_srs EPSG:4326 brannstasjon.geojson brannstasjon.gpkg brannstasjon&lt;/bash-input&gt;&lt;bash-stdout&gt;ERROR 1: Unable to open datasource <code>brannstasjon.gpkg&#x27; with the following drivers.<br>  -&amp;gt; </code>MEM&#x27;<br>  -&amp;gt; <code>FITS&#x27;<br>  -&amp;gt; </code>PCIDSK&#x27;<br>  -&amp;gt; <code>netCDF&#x27;<br>  -&amp;gt; </code>PDS4&#x27;<br>  -&amp;gt; <code>VICAR&#x27;<br>  -&amp;gt; </code>JP2OpenJPEG&#x27;<br>  -&amp;gt; <code>PDF&#x27;<br>  -&amp;gt; </code>MBTiles&#x27;<br>  -&amp;gt; <code>BAG&#x27;<br>  -&amp;gt; </code>EEDA&#x27;<br>  -&amp;gt; <code>OGCAPI&#x27;<br>  -&amp;gt; </code>GDALG&#x27;<br>  -&amp;gt; <code>ESRI Shapefile&#x27;<br>  -&amp;gt; </code>MapInfo File&#x27;<br>  -&amp;gt; <code>UK .NTF&#x27;<br>  -&amp;gt; </code>LVBAG&#x27;<br>  -&amp;gt; <code>S57&#x27;<br>  -&amp;gt; </code>DGN&#x27;<br>  -&amp;gt; <code>OGR_VRT&#x27;<br>  -&amp;gt; </code>CSV&#x27;<br>  -&amp;gt; <code>NAS&#x27;<br>  -&amp;gt; </code>GML&#x27;<br>  -&amp;gt; <code>GPX&#x27;<br>  -&amp;gt; </code>LIBKML&#x27;<br>  -&amp;gt; <code>KML&#x27;<br>  -&amp;gt; </code>GeoJSON&#x27;<br>  -&amp;gt; <code>GeoJSONSeq&#x27;<br>  -&amp;gt; </code>ESRIJSON&#x27;<br>  -&amp;gt; <code>TopoJSON&#x27;<br>  -&amp;gt; </code>Interlis 1&#x27;<br>  -&amp;gt; <code>Interlis 2&#x27;<br>  -&amp;gt; </code>OGR_GMT&#x27;<br>  -&amp;gt; <code>GPKG&#x27;<br>  -&amp;gt; </code>SQLite&#x27;<br>  -&amp;gt; <code>ODBC&#x27;<br>  -&amp;gt; </code>WAsP&#x27;<br>  -&amp;gt; <code>PGeo&#x27;<br>  -&amp;gt; </code>MSSQLSpatial&#x27;<br>  -&amp;gt; <code>PostgreSQL&#x27;<br>  -&amp;gt; </code>OpenFileGDB&#x27;<br>  -&amp;gt; <code>DXF&#x27;<br>  -&amp;gt; </code>CAD&#x27;<br>  -&amp;gt; <code>FlatGeobuf&#x27;<br>  -&amp;gt; </code>GeoRSS&#x27;<br>  -&amp;gt; <code>VFK&#x27;<br>  -&amp;gt; </code>PGDUMP&#x27;<br>  -&amp;gt; <code>OSM&#x27;<br>  -&amp;gt; </code>GPSBabel&#x27;<br>  -&amp;gt; <code>OGR_PDS&#x27;<br>  -&amp;gt; </code>WFS&#x27;<br>  -&amp;gt; <code>OAPIF&#x27;<br>  -&amp;gt; </code>EDIGEO&#x27;<br>  -&amp;gt; <code>Idrisi&#x27;<br>  -&amp;gt; </code>XLS&#x27;<br>  -&amp;gt; <code>ODS&#x27;<br>  -&amp;gt; </code>XLSX&#x27;<br>  -&amp;gt; <code>Elasticsearch&#x27;<br>  -&amp;gt; </code>Carto&#x27;<br>  -&amp;gt; <code>AmigoCloud&#x27;<br>  -&amp;gt; </code>SXF&#x27;<br>  -&amp;gt; <code>Selafin&#x27;<br>  -&amp;gt; </code>JML&#x27;<br>  -&amp;gt; <code>PLSCENES&#x27;<br>  -&amp;gt; </code>CSW&#x27;<br>  -&amp;gt; <code>VDV&#x27;<br>  -&amp;gt; </code>GMLAS&#x27;<br>  -&amp;gt; <code>MVT&#x27;<br>  -&amp;gt; </code>NGW&#x27;<br>  -&amp;gt; <code>MapML&#x27;<br>  -&amp;gt; </code>Parquet&#x27;<br>  -&amp;gt; <code>Arrow&#x27;<br>  -&amp;gt; </code>GTFS&#x27;<br>  -&amp;gt; <code>PMTiles&#x27;<br>  -&amp;gt; </code>JSONFG&#x27;<br>  -&amp;gt; <code>MiraMonVector&#x27;<br>  -&amp;gt; </code>ADBC&#x27;<br>  -&amp;gt; <code>TIGER&#x27;<br>  -&amp;gt; </code>AVCBin&#x27;<br>  -&amp;gt; <code>AVCE00&#x27;<br>  -&amp;gt; </code>AIVector&#x27;<br>  -&amp;gt; `HTTP&#x27;&lt;/bash-stdout&gt;&lt;bash-stderr&gt;&lt;/bash-stderr&gt;</p></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="prose"><p>Feilen kommer fra at kommandoen ble kjørt i en mappe der <code>brannstasjon.gpkg</code> ikke ligger. Filen ligger i <code>eksempeldata/</code>. Jeg fant den der, og kommandoen jeg kjørte virket derfra. Jeg har ikke endret noe nå.</p>
+<p>Kjør den fra riktig mappe:</p>
+<pre><code>cd /Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata &amp;&amp; ogr2ogr -f GeoJSON -t_srs EPSG:4326 brannstasjon.geojson brannstasjon.gpkg brannstasjon</code></pre>
+<p>Du kan også bruke hele stien til gpkg-filen. <code>brannstasjon.geojson</code> finnes allerede der fra min kjøring, så <code>ogr2ogr</code> stopper hvis du ikke legger til <code>-overwrite</code>.</p></div></section>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>&lt;bash-input&gt;cd /Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata &amp;&amp; ogr2ogr -f GeoJSON -t_srs EPSG:4326 brannstasjon.geojson brannstasjon.gpkg brannstasjon&lt;/bash-input&gt;&lt;bash-stdout&gt;[No output was captured. The command ran in the terminal pane (tab 0); if it should have printed something, use read_terminal with tab_id &quot;0&quot; to check.]&lt;/bash-stdout&gt;&lt;bash-stderr&gt;&lt;/bash-stderr&gt;</p></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="prose"><p>Kommandoen kjørte uten feil. Utdata er tom, og det er normalt for <code>ogr2ogr</code> når alt går bra. <code>brannstasjon.geojson</code> er nå skrevet på nytt med de 3 punktene i EPSG:4326.</p>
+<p>Jeg sa at <code>ogr2ogr</code> stopper hvis filen finnes fra før, men det stemte ikke helt for GeoJSON. Driveren overskriver filen uten å klage.</p></div></section>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>jeg skal konvertere alle layers i bygg geopackage til geojson i epsg:4326. Bruk ogr2ogr.</p></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc">Find bygg geopackage</span></div><div class="term"><div class="cmd"><pre>find . -iname &quot;bygg*.gpkg&quot; -not -path &quot;*/node_modules/*&quot; 2&gt;/dev/null</pre></div><div class="out"><pre>./eksempeldata/bygg.gpkg</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc">Convert all bygg layers to GeoJSON 4326</span></div><div class="term"><div class="cmd"><pre>cd /Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata &amp;&amp; ogrinfo -q bygg.gpkg | sed -E &#x27;s/^[0-9]+: (.*) \(.*\)$/\1/&#x27; | while read -r l; do ogr2ogr -f GeoJSON -t_srs EPSG:4326 &quot;bygg_$l.geojson&quot; bygg.gpkg &quot;$l&quot; &amp;&amp; echo &quot;ok $l&quot;; done; ls -la bygg*.geojson</pre></div><div class="out"><pre>ok bygg
+-rw-r--r--  1 alexandesn  staff  73344 Nov  3 10:31 bygg.geojson
+-rw-r--r--  1 alexandesn  staff  73344 Nov  3 10:47 bygg_bygg.geojson</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc">Remove duplicate output and verify</span></div><div class="term"><div class="cmd"><pre>cmp bygg.geojson bygg_bygg.geojson &amp;&amp; rm bygg_bygg.geojson; ogrinfo -so bygg.geojson bygg | grep -E &quot;Feature Count|Geometry:|ID\[\&quot;EPSG\&quot;,4326\]&quot;</pre></div><div class="out"><pre>Geometry: Point
+Feature Count: 500
+    ID[&quot;EPSG&quot;,4326]]</pre></div></div></div><div class="prose"><p><code>bygg.gpkg</code> har bare ett lag, <code>bygg</code>, og det er konvertert til GeoJSON i EPSG:4326. Resultatet er <code>bygg.geojson</code>: 500 punkter.</p>
+<p>Det lå allerede en <code>bygg.geojson</code> i mappen, med tidsstempel 10:31 i dag. Jeg skrev først til <code>bygg_bygg.geojson</code>, og den var byte-for-byte lik den eksisterende. Jeg slettet den, så <code>bygg.geojson</code> er uendret.</p>
+<p>Kommandoen:</p>
+<pre><code>ogr2ogr -f GeoJSON -t_srs EPSG:4326 bygg.geojson bygg.gpkg bygg</code></pre></div></section>
+<div class="foot">Eksportert fra Claude Code. Tenke-blokker er skjult som standard; åpne dem ved å trykke på «Tenkte».</div></div>

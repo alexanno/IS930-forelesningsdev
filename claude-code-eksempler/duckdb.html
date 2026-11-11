@@ -1,0 +1,689 @@
+<title>DuckDB</title>
+<style>
+/* Layout: smal lesekolonne som en chat-logg; terminalblokker er det mørke aksentet */
+:root{
+  --bg:#f6f7f5; --fg:#1d2321; --muted:#68726e; --line:#dde2df; --card:#ffffff;
+  --user-bg:#e9efec; --accent:#1f6f5c; --term-bg:#14191a; --term-fg:#d7e0dc; --term-dim:#7e8a85;
+  --term-prompt:#6fd0b0; --term-line:#2a3335; --err:#e0766b; --add-bg:#e3f3e8; --del-bg:#f9e5e2;
+  --font-body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --font-head:'IBM Plex Sans',system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101413; --fg:#e4eae7; --muted:#8f9a95; --line:#27302d; --card:#171c1b;
+  --user-bg:#1d2624; --accent:#6fd0b0; --term-bg:#0a0d0d; --term-fg:#d7e0dc; --term-dim:#7e8a85;
+  --term-prompt:#6fd0b0; --term-line:#222a2b; --err:#ef8d83; --add-bg:#173324; --del-bg:#3a1e1b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101413; --fg:#e4eae7; --muted:#8f9a95; --line:#27302d; --card:#171c1b;
+  --user-bg:#1d2624; --accent:#6fd0b0; --term-bg:#0a0d0d; --term-fg:#d7e0dc; --term-dim:#7e8a85;
+  --term-prompt:#6fd0b0; --term-line:#222a2b; --err:#ef8d83; --add-bg:#173324; --del-bg:#3a1e1b; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:15px;line-height:1.6;padding-inline:16px;padding-block:0}
+.wrap{max-width:820px;margin:0 auto;padding-block:32px 72px;display:flex;flex-direction:column;gap:18px}
+header{padding-bottom:18px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+header .kicker{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+header h1{font-size:28px;line-height:1.2;margin:0;font-weight:600;text-wrap:balance}
+header .meta{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 16px}
+.msg{min-width:0}
+.user{background:var(--user-bg);border-radius:10px;padding:12px 16px;align-self:flex-end;max-width:92%;min-width:0}
+.user .who,.asst .who{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.asst{display:flex;flex-direction:column;gap:12px;min-width:0}
+.prose{overflow-wrap:anywhere}
+.prose p{margin:0 0 .75em}.prose p:last-child{margin-bottom:0}
+.prose h1,.prose h2,.prose h3,.prose h4{margin:1em 0 .4em;line-height:1.3;font-weight:600}
+.prose h1{font-size:20px}.prose h2{font-size:18px}.prose h3,.prose h4{font-size:16px}
+.prose ul,.prose ol{margin:0 0 .75em;padding-left:1.4em}.prose li{margin:.15em 0}
+.prose code{font-family:var(--font-mono);font-size:.88em;background:var(--line);padding:.1em .35em;border-radius:4px}
+.prose pre{background:var(--term-bg);color:var(--term-fg);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0 0 .75em}
+.prose pre code{background:none;padding:0;font-size:12.5px;line-height:1.5;color:inherit}
+.prose blockquote{margin:0 0 .75em;padding-left:12px;border-left:3px solid var(--line);color:var(--muted)}
+.prose a{color:var(--accent)}
+.tablewrap{overflow-x:auto;margin:0 0 .75em}
+.prose table{border-collapse:collapse;font-size:13.5px}
+.prose th,.prose td{border:1px solid var(--line);padding:5px 10px;text-align:left;vertical-align:top}
+.prose th{background:var(--card)}
+.prose hr{border:0;border-top:1px solid var(--line);margin:1em 0}
+details.think{color:var(--muted);font-size:13.5px}
+details.think summary{cursor:pointer;font-style:italic}
+details.think .prose{margin-top:6px;padding-left:12px;border-left:2px solid var(--line)}
+/* verktøykall */
+.tool{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card);min-width:0}
+.tool-head{display:flex;gap:8px;align-items:baseline;padding:8px 12px;font-size:13px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tool-head .name{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.tool-head .desc{color:var(--fg);min-width:0;overflow-wrap:anywhere}
+.tool-head .path{font-family:var(--font-mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.term{background:var(--term-bg);color:var(--term-fg);font-family:var(--font-mono);font-size:12.5px;line-height:1.55}
+.term pre{margin:0;padding:10px 14px;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+.term .cmd{border-bottom:1px solid var(--term-line)}
+.term .cmd pre::before{content:"$ ";color:var(--term-prompt)}
+.term .out pre{color:var(--term-fg)}
+.term .err pre{color:var(--err)}
+.term .lbl{padding:6px 14px 0;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--term-dim)}
+.term .empty{padding:8px 14px;color:var(--term-dim);font-style:italic}
+details.more summary{cursor:pointer;padding:6px 14px;color:var(--term-prompt);font-size:12px;border-top:1px solid var(--term-line)}
+.file pre{margin:0;padding:10px 14px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.5;background:var(--card);color:var(--fg)}
+.diff .l{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+.diff .a{background:var(--add-bg)}.diff .d{background:var(--del-bg)}
+.imgres{padding:10px 14px;background:var(--term-bg)}
+.imgres img{max-width:100%;height:auto;border-radius:6px;display:block}
+.foot{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+@media(max-width:520px){.user{max-width:100%}header h1{font-size:24px}}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<div class="wrap"><header><div class="kicker">Claude Code-samtale</div><h1>DuckDB</h1><div class="meta"><span>2. Nov 2026, 22:33</span><span>15 terminalkommandoer</span><span>Claude Code, IS930-forelesningsdev</span></div></header>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>jeg skal gjøre geografiske operasjoner med duckdb på geopackage-filene som ligger i mappen</p>
+<ol><li>Jeg vil finne alle bygninger innenfor 100 meter fra en brannstasjon</li><li>Jeg vil finne alle brannstasjoner i en eiendom</li><li>telle antall eiendommer innenfor en kommune</li><li>telle antall bygninger per kommune og per eiendom</li></ol></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>ls -la eksempeldata; which duckdb; python3 -c &quot;import duckdb;print(duckdb.__version__)&quot;</pre></div><div class="out"><pre>Exit code 1
+total 1704
+drwxr-xr-x  11 alexandesn  staff     352 Nov  2 21:57 .
+drwxr-xr-x   5 alexandesn  staff     160 Nov  2 22:31 ..
+-rw-r--r--@  1 alexandesn  staff   98304 Oct 11 08:41 brannstasjon.gpkg
+-rw-r--r--@  1 alexandesn  staff   98304 Oct 11 08:41 buffer_duckdb.gpkg
+-rw-r--r--@  1 alexandesn  staff  155648 Oct 11 08:41 bygg.gpkg
+-rw-r--r--@  1 alexandesn  staff  122880 Oct 11 08:41 eiendom.gpkg
+-rw-r--r--@  1 alexandesn  staff   98304 Oct 11 08:41 faresone.gpkg
+-rw-r--r--@  1 alexandesn  staff   98304 Oct 11 08:41 grunnkrets.gpkg
+-rw-r--r--@  1 alexandesn  staff   98304 Oct 11 08:41 kommuner.gpkg
+-rw-r--r--   1 alexandesn  staff    2166 Oct 11 08:41 lag_data.py
+-rw-r--r--@  1 alexandesn  staff   98304 Oct 11 08:41 vassdrag.gpkg
+duckdb not found
+Traceback (most recent call last):
+  File &quot;&lt;string&gt;&quot;, line 1, in &lt;module&gt;
+    import duckdb;print(duckdb.__version__)
+    ^^^^^^^^^^^^^
+ModuleNotFoundError: No module named &#x27;duckdb&#x27;</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>cd /Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata &amp;&amp; cat lag_data.py; which ogrinfo uv pip3 brew; python3 --version</pre></div><div class="out"><pre>import geopandas as gpd, numpy as np
+from shapely.geometry import Point, LineString, box
+from pyproj import Transformer
+rng = np.random.default_rng(1)
+tr = Transformer.from_crs(4326, 25833, always_xy=True)
+x0, y0 = tr.transform(8.0, 58.15)       # Kristiansand
+crs = &quot;EPSG:25833&quot;
+# kommuner: to ruter side om side
+kommuner = gpd.GeoDataFrame({&quot;kommunenavn&quot;: [&quot;Kristiansand&quot;, &quot;Vennesla&quot;], &quot;kommunenummer&quot;: [&quot;4204&quot;, &quot;4223&quot;]},
+    geometry=[box(x0-6000, y0-6000, x0+4000, y0+6000), box(x0+4000, y0-6000, x0+12000, y0+6000)], crs=crs)
+# grunnkretser: 4x3 ruter
+gk = []
+for ix in range(5):
+    for iy in range(3):
+        gk.append(box(x0-6000+ix*3600, y0-6000+iy*4000, x0-6000+(ix+1)*3600, y0-6000+(iy+1)*4000))
+gk = gpd.GeoDataFrame({&quot;grunnkretsnummer&quot;: [f&quot;{42040000+i}&quot; for i in range(len(gk))]}, geometry=gk, crs=crs)
+gk[&quot;kommunenummer&quot;] = np.where(gk.geometry.centroid.x &lt; x0+4000, &quot;4204&quot;, &quot;4223&quot;)
+# bygg (punkter)
+pts = [Point(x0-6000+rng.random()*18000, y0-6000+rng.random()*12000) for _ in range(500)]
+bygg = gpd.GeoDataFrame({&quot;bygg_id&quot;: range(500), &quot;bruksareal&quot;: rng.integers(30, 400, 500)}, geometry=pts, crs=crs)
+# vassdrag
+vass = gpd.GeoDataFrame({&quot;navn&quot;: [&quot;Otra&quot;, &quot;Bekk&quot;]}, geometry=[LineString([(x0-5000, y0-5500), (x0, y0), (x0+6000, y0+5500)]), LineString([(x0+3000, y0-5000), (x0+3500, y0+2000)])], crs=crs)
+# brannstasjoner
+brann = gpd.GeoDataFrame({&quot;navn&quot;: [&quot;Brannstasjon A&quot;, &quot;Brannstasjon B&quot;, &quot;Brannstasjon C&quot;]}, geometry=[Point(x0-2000, y0), Point(x0+5000, y0+3000), Point(x0+9000, y0-3000)], crs=crs)
+# eiendommer (rutenett av små polygoner) og faresone
+ei = [box(x0-2000+i*400, y0-2000+j*400, x0-2000+(i+1)*400, y0-2000+(j+1)*400) for i in range(10) for j in range(10)]
+eiendom = gpd.GeoDataFrame({&quot;gnr_bnr&quot;: [f&quot;{i}/1&quot; for i in range(100)]}, geometry=ei, crs=crs)
+fare = gpd.GeoDataFrame({&quot;fare&quot;: [&quot;flom&quot;]}, geometry=[vass.geometry.iloc[0].buffer(500)], crs=crs)
+for n, g in dict(kommuner=kommuner, grunnkrets=gk, bygg=bygg, vassdrag=vass, brannstasjon=brann, eiendom=eiendom, faresone=fare).items():
+    g.to_file(f&quot;{n}.gpkg&quot;, layer=n, driver=&quot;GPKG&quot;)
+print(&quot;ok&quot;, {n: len(g) for n, g in dict(kommuner=kommuner, grunnkrets=gk, bygg=bygg).items()})
+/opt/homebrew/bin/ogrinfo
+/Users/alexandesn/.local/bin/uv
+/opt/homebrew/bin/pip3
+/opt/homebrew/bin/brew
+Python 3.14.8</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>cat &gt; oppgaver.sql &lt;&lt;&#x27;EOF&#x27;
+INSTALL spatial; LOAD spatial;
+
+CREATE OR REPLACE VIEW bygg AS SELECT * FROM ST_Read(&#x27;bygg.gpkg&#x27;);
+CREATE OR REPLACE VIEW brann AS SELECT * FROM ST_Read(&#x27;brannstasjon.gpkg&#x27;);
+CREATE OR REPLACE VIEW eiendom AS SELECT * FROM ST_Read(&#x27;eiendom.gpkg&#x27;);
+CREATE OR REPLACE VIEW kommune AS SELECT * FROM ST_Read(&#x27;kommuner.gpkg&#x27;);
+
+.print &#x27;--- 1. Bygninger innen 100 m fra brannstasjon&#x27;
+SELECT b.bygg_id, s.navn AS brannstasjon, round(ST_Distance(b.geom, s.geom), 1) AS avstand_m
+FROM bygg b JOIN brann s ON ST_DWithin(b.geom, s.geom, 100)
+ORDER BY avstand_m;
+
+.print &#x27;--- 2. Brannstasjoner i eiendom&#x27;
+SELECT s.navn, e.gnr_bnr
+FROM brann s JOIN eiendom e ON ST_Intersects(e.geom, s.geom);
+
+.print &#x27;--- 3. Eiendommer per kommune&#x27;
+SELECT k.kommunenavn, count(e.gnr_bnr) AS antall_eiendommer
+FROM kommune k LEFT JOIN eiendom e ON ST_Intersects(k.geom, ST_PointOnSurface(e.geom))
+GROUP BY k.kommunenavn ORDER BY 1;
+
+.print &#x27;--- 4a. Bygninger per kommune&#x27;
+SELECT k.kommunenavn, count(b.bygg_id) AS antall_bygg
+FROM kommune k LEFT JOIN bygg b ON ST_Intersects(k.geom, b.geom)
+GROUP BY k.kommunenavn ORDER BY 1;
+
+.print &#x27;--- 4b. Bygninger per eiendom (kun eiendommer med bygg)&#x27;
+SELECT e.gnr_bnr, count(*) AS antall_bygg
+FROM eiendom e JOIN bygg b ON ST_Intersects(e.geom, b.geom)
+GROUP BY e.gnr_bnr ORDER BY antall_bygg DESC, e.gnr_bnr;
+EOF
+uv run --with duckdb python -c &quot;
+import duckdb,sys
+c=duckdb.connect()
+c.execute(&#x27;INSTALL spatial; LOAD spatial&#x27;)
+print(c.sql(\&quot;select * from ST_Read(&#x27;bygg.gpkg&#x27;) limit 2\&quot;))
+print(c.sql(\&quot;select * from ST_Read(&#x27;eiendom.gpkg&#x27;) limit 2\&quot;))
+&quot; 2&gt;&amp;1 | tail -20; which duckdb || brew list duckdb 2&gt;&amp;1 | head -1</pre></div><div class="out"><pre>┌─────────┬────────────┬────────────────────────────────────────────┐
+│ bygg_id │ bruksareal │                    geom                    │
+│  int64  │   int64    │                  geometry                  │
+├─────────┼────────────┼────────────────────────────────────────────┤
+│       0 │        262 │ POINT (91635.7281819421 6472213.682205821) │
+│       1 │        230 │ POINT (85017.8119662909 6472191.911215557) │
+└─────────┴────────────┴────────────────────────────────────────────┘
+
+┌─────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ gnr_bnr │                                                    geom                                                    │
+│ varchar │                                                  geometry                                                  │
+├─────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 0/1     │ POLYGON ((86822.93893733749 6464808.11784991, 86822.93893733749 6465208.11784991, 86422.93893733749 6465…  │
+│ 1/1     │ POLYGON ((86822.93893733749 6465208.11784991, 86822.93893733749 6465608.11784991, 86422.93893733749 6465…  │
+└─────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+duckdb not found
+==&gt; Downloading Homebrew API data</pre></div></div></div><div class="prose"><p>Kolonnene stemmer med skriptet mitt. Kjører SQL-en via Python.</p></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>cat &gt; kjor.py &lt;&lt;&#x27;EOF&#x27;
+import duckdb, re
+c = duckdb.connect()
+sql = open(&#x27;oppgaver.sql&#x27;).read()
+for part in re.split(r&#x27;(?m)^\.print \&#x27;(.*)\&#x27;\n&#x27;, sql):
+    pass
+parts = re.split(r&quot;(?m)^\.print &#x27;(.*)&#x27;\n&quot;, sql)
+c.execute(parts[0])
+for title, q in zip(parts[1::2], parts[2::2]):
+    print(f&quot;\n{title}&quot;)
+    c.sql(q).show(max_rows=15)
+EOF
+uv run --with duckdb python kjor.py</pre></div><div class="out"><pre>--- 1. Bygninger innen 100 m fra brannstasjon
+┌─────────┬────────────────┬───────────┐
+│ bygg_id │  brannstasjon  │ avstand_m │
+│  int64  │    varchar     │  double   │
+├─────────┼────────────────┼───────────┤
+│     318 │ Brannstasjon A │      91.5 │
+└─────────┴────────────────┴───────────┘
+
+
+--- 2. Brannstasjoner i eiendom
+┌────────────────┬─────────┐
+│      navn      │ gnr_bnr │
+│    varchar     │ varchar │
+├────────────────┼─────────┤
+│ Brannstasjon A │ 4/1     │
+│ Brannstasjon A │ 5/1     │
+└────────────────┴─────────┘
+
+
+--- 3. Eiendommer per kommune
+┌──────────────┬───────────────────┐
+│ kommunenavn  │ antall_eiendommer │
+│   varchar    │       int64       │
+├──────────────┼───────────────────┤
+│ Kristiansand │               100 │
+│ Vennesla     │                 0 │
+└──────────────┴───────────────────┘
+
+
+--- 4a. Bygninger per kommune
+┌──────────────┬─────────────┐
+│ kommunenavn  │ antall_bygg │
+│   varchar    │    int64    │
+├──────────────┼─────────────┤
+│ Kristiansand │         286 │
+│ Vennesla     │         214 │
+└──────────────┴─────────────┘
+
+
+--- 4b. Bygninger per eiendom (kun eiendommer med bygg)
+┌─────────┬─────────────┐
+│ gnr_bnr │ antall_bygg │
+│ varchar │    int64    │
+├─────────┼─────────────┤
+│ 35/1    │           2 │
+│ 48/1    │           2 │
+│ 75/1    │           2 │
+│ 11/1    │           1 │
+│ 12/1    │           1 │
+│ 16/1    │           1 │
+│ 22/1    │           1 │
+│ 26/1    │           1 │
+│  ·      │           · │
+│  ·      │           · │
+│  ·      │           · │
+│ 76/1    │           1 │
+│ 78/1    │           1 │
+│ 80/1    │           1 │
+│ 84/1    │           1 │
+│ 9/1     │           1 │
+│ 97/1    │           1 │
+│ 98/1    │           1 │
+├─────────┴─────────────┤
+│ 34 rows     2 columns │
+│ (15 shown)            │
+└───────────────────────┘</pre></div></div></div><div class="prose"><p>Alle fire operasjonene kjører på geopackage-filene i <code>eksempeldata/</code>. Jeg brukte DuckDB med spatial-utvidelsen, kjørt via <code>uv run --with duckdb python kjor.py</code>. Jeg har ikke lagt til noe i systemet.</p>
+<p>Spørringene ligger i <code>oppgaver.sql</code>, og <code>kjor.py</code> kjører dem og skriver ut resultatene. Alle lagene er i EPSG:25833, så avstander og buffer er i meter uten reprojisering.</p>
+<p><strong>Resultater</strong></p>
+<ol><li><strong>Bygninger innen 100 m fra brannstasjon:</strong> Det er bare én, bygg 318, som ligger 91,5 m fra Brannstasjon A. Spørringen bruker <code>ST_DWithin(b.geom, s.geom, 100)</code>.</li><li><strong>Brannstasjoner i eiendom:</strong> Brannstasjon A ligger i både eiendom 4/1 og 5/1. Stasjonen ligger nøyaktig på grensen mellom de to, så <code>ST_Intersects</code> gir treff på begge. <code>ST_Within</code> eller <code>ST_Contains</code> hadde gitt null treff, fordi de ikke teller punkt på kanten.</li><li><strong>Eiendommer per kommune:</strong> Kristiansand har 100 eiendommer og Vennesla har 0. Jeg bruker <code>ST_PointOnSurface</code> på eiendommen, slik at en eiendom som krysser en kommunegrense ikke telles to ganger.</li><li><strong>Bygninger per kommune og per eiendom:</strong> Kristiansand har 286 bygninger og Vennesla 214. Bare 34 av de 100 eiendommene har bygg. Eiendommene 35/1, 48/1 og 75/1 har to hver, og resten har ett. Eiendommer uten bygg er ikke med i listen. Bytt til <code>LEFT JOIN</code> for å få dem med og null som antall.</li></ol>
+<p>Bygningene er punkter. Hvis du får ekte byggpolygoner senere, bør oppgave 1 bruke polygonavstanden, og oppgave 4 bør bruke <code>ST_PointOnSurface</code> på polygonen, på samme måte som i oppgave 3.</p></div></section>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>&lt;bash-input&gt;code .&lt;/bash-input&gt;&lt;bash-stdout&gt;[No output was captured. The command ran in the terminal pane (tab 0); if it should have printed something, use read_terminal with tab_id &quot;0&quot; to check.]&lt;/bash-stdout&gt;&lt;bash-stderr&gt;&lt;/bash-stderr&gt;</p></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="prose"><p>Du kjørte <code>code .</code> i terminalpanelet, og det ga ingen utskrift. Det betyr trolig at VS Code åpnet mappen <code>eksempeldata/</code>. Si fra hvis den ikke åpnet seg, så sjekker jeg terminalutskriften.</p>
+<p>Vil du at jeg gjør noe mer med spørringene, for eksempel å ta med eiendommer uten bygg i oppgave 4 eller eksportere resultatene til en fil?</p></div></section>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>Jeg vil hente inn restauranter fra OvertureMaps. Bruk STAC catalog til Overture Maps for å hente siste versjon. Vær presis på å filtrere på bbox for å unngå og laste for mye data. Bruk duckdb. Lagre til geoparquet</p></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>curl -s https://stac.overturemaps.org/catalog.json | python3 -c &quot;
+import json,sys;d=json.load(sys.stdin);print(d.get(&#x27;latest&#x27;));[print(l[&#x27;rel&#x27;],l[&#x27;href&#x27;]) for l in d[&#x27;links&#x27;]]&quot;</pre></div><div class="out"><pre>2026-10-21.0
+root https://stac.overturemaps.org/catalog.json
+self https://stac.overturemaps.org/catalog.json
+child https://stac.overturemaps.org/2026-09-23.0/catalog.json
+child https://stac.overturemaps.org/2026-09-23.1/catalog.json
+child https://stac.overturemaps.org/2026-10-21.0/catalog.json
+alternate ./latest.ddb</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>uv run --with duckdb python -c &quot;
+import duckdb
+c=duckdb.connect();c.execute(&#x27;INSTALL spatial;LOAD spatial&#x27;)
+print(c.sql(\&quot;select min(ST_XMin(geom)),min(ST_YMin(geom)),max(ST_XMax(geom)),max(ST_YMax(geom)) from ST_Read(&#x27;kommuner.gpkg&#x27;)\&quot;).fetchall())&quot;</pre></div><div class="out"><pre>[(82422.93893733749, 6460808.11784991, 100422.93893733749, 6472808.11784991)]</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>curl -s https://stac.overturemaps.org/2026-10-21.0/catalog.json | python3 -c &quot;
+import json,sys;d=json.load(sys.stdin);[print(l[&#x27;rel&#x27;],l[&#x27;href&#x27;],l.get(&#x27;title&#x27;)) for l in d[&#x27;links&#x27;]]&quot;; curl -s https://stac.overturemaps.org/2026-10-21.0/places/place/collection.json | python3 -c &quot;
+import json,sys;d=json.load(sys.stdin);print(json.dumps({k:v for k,v in d.items() if k!=&#x27;links&#x27;},indent=1)[:1500]);[print(l[&#x27;rel&#x27;],l[&#x27;href&#x27;]) for l in d[&#x27;links&#x27;]][:5]&quot;</pre></div><div class="out"><pre>root https://stac.overturemaps.org/catalog.json Overture Releases
+child https://stac.overturemaps.org/2026-10-21.0/addresses/catalog.json addresses
+child https://stac.overturemaps.org/2026-10-21.0/base/catalog.json base
+child https://stac.overturemaps.org/2026-10-21.0/buildings/catalog.json buildings
+child https://stac.overturemaps.org/2026-10-21.0/divisions/catalog.json divisions
+child https://stac.overturemaps.org/2026-10-21.0/places/catalog.json places
+child https://stac.overturemaps.org/2026-10-21.0/transportation/catalog.json transportation
+prev https://stac.overturemaps.org/2026-09-23.1/catalog.json 2026-09-23.1 Overture Release
+parent https://stac.overturemaps.org/catalog.json Overture Releases
+self https://stac.overturemaps.org/2026-10-21.0/catalog.json None
+{
+ &quot;type&quot;: &quot;Collection&quot;,
+ &quot;stac_version&quot;: &quot;1.1.0&quot;,
+ &quot;stac_extensions&quot;: [
+  &quot;https://stac-extensions.github.io/table/v1.2.0/schema.json&quot;,
+  &quot;https://schemas.portolan-sdi.org/incubating/partition/v1.0.0/schema.json&quot;
+ ],
+ &quot;id&quot;: &quot;place&quot;,
+ &quot;title&quot;: &quot;place&quot;,
+ &quot;description&quot;: &quot;Overture&#x27;s place collection&quot;,
+ &quot;license&quot;: &quot;other&quot;,
+ &quot;extent&quot;: {
+  &quot;spatial&quot;: {
+   &quot;bbox&quot;: [
+    [
+     -179.99806213378906,
+     -84.9901123046875,
+     179.9976043701172,
+     83.57147979736328
+    ],
+    [
+     -179.99806213378906,
+     -84.9901123046875,
+     -74.9131851196289,
+     28.344669342041016
+    ],
+    [
+     -120.6488037109375,
+     28.344669342041016,
+     -76.41238403320312,
+     34.77007293701172
+    ],
+    [
+     -179.81707763671875,
+     34.77007293701172,
+     -87.93789672851562,
+     81.75200653076172
+    ],
+    [
+     -87.93790435791016,
+     34.770076751708984,
+     -74.91316986083984,
+     82.78334045410156
+    ],
+    [
+     -74.9105224609375,
+     -84.92832946777344,
+     3.874483823776245,
+     -20.012929916381836
+    ],
+    [
+     -74.91317749023438,
+     -20.01293182373047,
+     4.38297700881958,
+     40.69429397583008
+    ],
+    [
+     -74.91317749023438,
+     40.69429016113281,
+     -1.5035587549209595,
+     83.57147979736328
+    ],
+    [
+     -1.50355863571167,
+     40.69438171386719,
+     4.383083820343018,
+     60.85527420043945
+    ],
+    [
+     4.383307456970215,
+     -84.54301452636719,
+     35.85000228881836,
+     42.22498321533203
+    ],
+    [
+     4.38308572769165,
+     42
+root https://stac.overturemaps.org/catalog.json
+license https://docs.overturemaps.org/attribution/
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00000/00000.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00001/00001.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00002/00002.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00003/00003.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00004/00004.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00005/00005.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00006/00006.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00007/00007.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00008/00008.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00009/00009.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00010/00010.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00011/00011.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00012/00012.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00013/00013.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00014/00014.json
+item https://stac.overturemaps.org/2026-10-21.0/places/place/00015/00015.json
+parent https://stac.overturemaps.org/2026-10-21.0/places/catalog.json
+self https://stac.overturemaps.org/2026-10-21.0/places/place/collection.json</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>curl -s https://stac.overturemaps.org/2026-10-21.0/places/place/00000/00000.json | python3 -m json.tool | head -60</pre></div><div class="out"><pre>{
+    &quot;type&quot;: &quot;Feature&quot;,
+    &quot;stac_version&quot;: &quot;1.1.0&quot;,
+    &quot;stac_extensions&quot;: [
+        &quot;https://stac-extensions.github.io/storage/v2.0.0/schema.json&quot;,
+        &quot;https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json&quot;,
+        &quot;https://stac-extensions.github.io/file/v2.1.0/schema.json&quot;
+    ],
+    &quot;id&quot;: &quot;00000&quot;,
+    &quot;geometry&quot;: {
+        &quot;type&quot;: &quot;Polygon&quot;,
+        &quot;coordinates&quot;: [
+            [
+                [
+                    -179.99806213378906,
+                    -84.9901123046875
+                ],
+                [
+                    -74.9131851196289,
+                    -84.9901123046875
+                ],
+                [
+                    -74.9131851196289,
+                    28.344669342041016
+                ],
+                [
+                    -179.99806213378906,
+                    28.344669342041016
+                ],
+                [
+                    -179.99806213378906,
+                    -84.9901123046875
+                ]
+            ]
+        ]
+    },
+    &quot;bbox&quot;: [
+        -179.99806213378906,
+        -84.9901123046875,
+        -74.9131851196289,
+        28.344669342041016
+    ],
+    &quot;properties&quot;: {
+        &quot;datetime&quot;: &quot;2026-10-21T00:00:00Z&quot;,
+        &quot;num_rows&quot;: 5526143,
+        &quot;num_row_groups&quot;: 256,
+        &quot;storage:schemes&quot;: {
+            &quot;aws&quot;: {
+                &quot;type&quot;: &quot;aws-s3&quot;,
+                &quot;platform&quot;: &quot;https://{bucket}.s3.{region}.amazonaws.com&quot;,
+                &quot;bucket&quot;: &quot;overturemaps-us-west-2&quot;,
+                &quot;region&quot;: &quot;us-west-2&quot;,
+                &quot;requester_pays&quot;: false
+            },
+            &quot;azure&quot;: {
+                &quot;type&quot;: &quot;ms-azure&quot;,
+                &quot;platform&quot;: &quot;https://{account}.blob.core.windows.net&quot;,
+                &quot;account&quot;: &quot;overturemapswestus2&quot;,
+                &quot;requester_pays&quot;: false
+            }</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>curl -s https://stac.overturemaps.org/2026-10-21.0/places/place/00000/00000.json | python3 -c &quot;
+import json,sys;d=json.load(sys.stdin);print(json.dumps(d[&#x27;assets&#x27;],indent=1))&quot;</pre></div><div class="out"><pre>{
+ &quot;aws&quot;: {
+  &quot;href&quot;: &quot;https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/release/2026-10-21.0/theme=places/type=place/part-00000-a0a9949b-7e8e-59fe-803b-6cc55b17f790-c000.zstd.parquet&quot;,
+  &quot;title&quot;: &quot;GeoParquet on AWS S3&quot;,
+  &quot;description&quot;: &quot;Zstd-compressed GeoParquet in the overturemaps-us-west-2 bucket, served over HTTPS.&quot;,
+  &quot;type&quot;: &quot;application/vnd.apache.parquet&quot;,
+  &quot;roles&quot;: [
+   &quot;data&quot;
+  ],
+  &quot;storage:refs&quot;: [
+   &quot;aws&quot;
+  ],
+  &quot;file:size&quot;: 729511821,
+  &quot;alternate:name&quot;: &quot;HTTPS&quot;,
+  &quot;alternate&quot;: {
+   &quot;s3&quot;: {
+    &quot;href&quot;: &quot;s3://overturemaps-us-west-2/release/2026-10-21.0/theme=places/type=place/part-00000-a0a9949b-7e8e-59fe-803b-6cc55b17f790-c000.zstd.parquet&quot;,
+    &quot;alternate:name&quot;: &quot;S3&quot;,
+    &quot;description&quot;: &quot;Access the files via regular Amazon AWS S3 tooling.&quot;,
+    &quot;roles&quot;: [
+     &quot;data&quot;
+    ]
+   }
+  }
+ },
+ &quot;azure&quot;: {
+  &quot;href&quot;: &quot;https://overturemapswestus2.blob.core.windows.net/release/2026-10-21.0/theme=places/type=place/part-00000-a0a9949b-7e8e-59fe-803b-6cc55b17f790-c000.zstd.parquet&quot;,
+  &quot;title&quot;: &quot;GeoParquet on Azure Blob Storage&quot;,
+  &quot;description&quot;: &quot;Zstd-compressed GeoParquet in the overturemapswestus2 storage account (West US 2), served over HTTPS.&quot;,
+  &quot;type&quot;: &quot;application/vnd.apache.parquet&quot;,
+  &quot;roles&quot;: [
+   &quot;data&quot;
+  ],
+  &quot;storage:refs&quot;: [
+   &quot;azure&quot;
+  ],
+  &quot;file:size&quot;: 729511821
+ }
+}</pre></div></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>cat &gt; hent_restauranter.py &lt;&lt;&#x27;EOF&#x27;
+&quot;&quot;&quot;Henter restauranter fra siste Overture Maps-release (via STAC) innenfor kommune-bbox til GeoParquet.&quot;&quot;&quot;
+import json, urllib.request
+import duckdb
+
+STAC = &quot;https://stac.overturemaps.org&quot;
+get = lambda u: json.load(urllib.request.urlopen(u))
+
+con = duckdb.connect()
+con.execute(&quot;INSTALL spatial; LOAD spatial; INSTALL httpfs; LOAD httpfs; SET s3_region=&#x27;us-west-2&#x27;;&quot;)
+
+# 1. bbox i WGS84 fra kommunelaget (EPSG:25833)
+xmin, ymin, xmax, ymax = con.sql(&quot;&quot;&quot;
+    WITH b AS (SELECT ST_Extent(ST_Transform(geom, &#x27;EPSG:25833&#x27;, &#x27;EPSG:4326&#x27;, always_xy := true)) AS e
+               FROM ST_Read(&#x27;kommuner.gpkg&#x27;))
+    SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) FROM b&quot;&quot;&quot;).fetchone()
+print(&quot;bbox:&quot;, xmin, ymin, xmax, ymax)
+
+# 2. siste release fra STAC, og kun filene (items) som overlapper bbox
+release = get(f&quot;{STAC}/catalog.json&quot;)[&quot;latest&quot;]
+print(&quot;release:&quot;, release)
+coll = get(f&quot;{STAC}/{release}/places/place/collection.json&quot;)
+files = []
+for l in coll[&quot;links&quot;]:
+    if l[&quot;rel&quot;] != &quot;item&quot;:
+        continue
+    item = get(l[&quot;href&quot;])
+    bx0, by0, bx1, by1 = item[&quot;bbox&quot;]
+    if bx0 &lt;= xmax and bx1 &gt;= xmin and by0 &lt;= ymax and by1 &gt;= ymin:
+        files.append(item[&quot;assets&quot;][&quot;aws&quot;][&quot;alternate&quot;][&quot;s3&quot;][&quot;href&quot;])
+print(&quot;filer som overlapper bbox:&quot;, len(files))
+
+# 3. Les kun bbox + kategori (bbox-struct gir row group-pruning), skriv GeoParquet
+con.execute(f&quot;&quot;&quot;
+COPY (
+  SELECT id,
+         names.primary AS navn,
+         categories.primary AS kategori,
+         basic_category,
+         confidence,
+         addresses[1].freeform AS adresse,
+         addresses[1].locality AS sted,
+         geometry
+  FROM read_parquet({files}, hive_partitioning=1)
+  WHERE bbox.xmin &gt;= {xmin} AND bbox.xmax &lt;= {xmax}
+    AND bbox.ymin &gt;= {ymin} AND bbox.ymax &lt;= {ymax}
+    AND basic_category = &#x27;restaurant&#x27;
+) TO &#x27;restauranter.parquet&#x27; (FORMAT PARQUET, COMPRESSION ZSTD);
+&quot;&quot;&quot;)
+print(con.sql(&quot;SELECT count(*) AS antall FROM &#x27;restauranter.parquet&#x27;&quot;))
+EOF
+uv run --with duckdb python hent_restauranter.py</pre></div><div class="out"><pre>Exit code 1
+bbox: 7.888124784110421 58.09090289193673 8.07789115477578 58.20719744538222
+release: 2026-10-21.0
+filer som overlapper bbox: 1
+Traceback (most recent call last):
+  File &quot;/Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata/hent_restauranter.py&quot;, line 33, in &lt;module&gt;
+    con.execute(f&quot;&quot;&quot;
+_duckdb.BinderException: Binder Error: Referenced table &quot;categories&quot; not found!
+Candidate tables: &quot;read_parquet&quot;
+
+LINE 5:          categories.primary AS kategori,
+                 ^</pre></div></div></div><div class="prose"><p>Henter oppgaven kjørte til skjemaet i denne releasen: jeg sjekker kolonnenavnene i place-filen.</p></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>uv run --with duckdb python -c &quot;
+import duckdb
+c=duckdb.connect();c.execute(&#x27;INSTALL httpfs;LOAD httpfs;SET s3_region=\&#x27;us-west-2\&#x27;&#x27;)
+u=&#x27;s3://overturemaps-us-west-2/release/2026-10-21.0/theme=places/type=place/part-00000-a0a9949b-7e8e-59fe-803b-6cc55b17f790-c000.zstd.parquet&#x27;
+for r in c.sql(f\&quot;describe select * from read_parquet(&#x27;{u}&#x27;)\&quot;).fetchall(): print(r[0],r[1][:100])
+&quot;</pre></div><div class="out"><pre>id VARCHAR
+geometry BLOB
+confidence DOUBLE
+websites VARCHAR[]
+emails VARCHAR[]
+socials VARCHAR[]
+phones VARCHAR[]
+brand STRUCT(wikidata VARCHAR, &quot;names&quot; STRUCT(&quot;primary&quot; VARCHAR, common MAP(VARCHAR, VARCHAR), rules STRUC
+addresses STRUCT(freeform VARCHAR, locality VARCHAR, postcode VARCHAR, region VARCHAR, country VARCHAR)[]
+names STRUCT(&quot;primary&quot; VARCHAR, common MAP(VARCHAR, VARCHAR), rules STRUCT(variant VARCHAR, &quot;language&quot; VAR
+sources STRUCT(property VARCHAR, dataset VARCHAR, license VARCHAR, record_id VARCHAR, update_time VARCHAR, c
+operating_status VARCHAR
+basic_category VARCHAR
+taxonomy STRUCT(&quot;primary&quot; VARCHAR, hierarchy VARCHAR[], alternates VARCHAR[])
+version INTEGER
+bbox STRUCT(xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE)
+theme VARCHAR
+type VARCHAR</pre></div></div></div><div class="prose"><p><code>categories</code> er erstattet av <code>taxonomy</code> i denne releasen. Jeg bytter kolonnen og sjekker hvilke verdier som finnes før jeg filtrerer på restaurant.</p></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>sed -i &#x27;s/categories.primary AS kategori/taxonomy.primary AS kategori/&#x27; hent_restauranter.py &amp;&amp; uv run --with duckdb python hent_restauranter.py 2&gt;&amp;1 | tail -15 &amp;&amp; uv run --with duckdb python -c &quot;
+import duckdb
+c=duckdb.connect();c.execute(&#x27;INSTALL spatial;LOAD spatial&#x27;)
+c.sql(\&quot;select basic_category, kategori, count(*) n from &#x27;restauranter.parquet&#x27; group by all order by n desc limit 10\&quot;).show()
+c.sql(\&quot;select navn,kategori,sted,ST_AsText(ST_GeomFromWKB(geometry)) g from &#x27;restauranter.parquet&#x27; limit 3\&quot;).show()
+&quot;; ls -la restauranter.parquet; ogrinfo -so restauranter.parquet restauranter 2&gt;&amp;1 | head -8</pre></div><div class="out"><pre>sed: 1: &quot;hent_restauranter.py
+&quot;: extra characters at the end of h command
+ls: restauranter.parquet: No such file or directory
+ERROR 4: restauranter.parquet: No such file or directory
+ogrinfo failed - unable to open &#x27;restauranter.parquet&#x27;.</pre></div></div></div><div class="prose"><p>macOS-<code>sed</code> krevde en annen syntaks, så ingenting kjørte. Jeg gjør endringen med Edit i stedet.</p></div><div class="tool file"><div class="tool-head"><span class="name">Edit</span><span class="path">/Users/alexandesn/dev/IS930-forelesningsdev/eksempeldata/hent_restauranter.py</span></div><div class="diff"><pre><span class="l d">- categories.primary AS kategori</span><span class="l a">+ taxonomy.primary AS kategori</span></pre></div></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>uv run --with duckdb python hent_restauranter.py 2&gt;&amp;1 | tail -15 &amp;&amp; uv run --with duckdb python -c &quot;
+import duckdb
+c=duckdb.connect();c.execute(&#x27;INSTALL spatial;LOAD spatial&#x27;)
+c.sql(\&quot;select basic_category, kategori, count(*) n from &#x27;restauranter.parquet&#x27; group by all order by n desc limit 10\&quot;).show()
+c.sql(\&quot;select navn,kategori,sted,ST_AsText(ST_GeomFromWKB(geometry)) g from &#x27;restauranter.parquet&#x27; limit 3\&quot;).show()
+&quot;; ls -la restauranter.parquet</pre></div><div class="out"><pre>bbox: 7.888124784110421 58.09090289193673 8.07789115477578 58.20719744538222
+release: 2026-10-21.0
+filer som overlapper bbox: 1
+┌────────┐
+│ antall │
+│ int64  │
+├────────┤
+│    179 │
+└────────┘
+
+Traceback (most recent call last):
+  File &quot;&lt;string&gt;&quot;, line 5, in &lt;module&gt;
+_duckdb.BinderException: Binder Error: No function matches the given name and argument types &#x27;ST_GeomFromWKB(GEOMETRY)&#x27;. You might need to add explicit type casts.
+	Candidate functions:
+	ST_GeomFromWKB(WKB_BLOB) -&gt; GEOMETRY
+	ST_GeomFromWKB(BLOB) -&gt; GEOMETRY
+
+┌────────────────┬─────────────────────────┬───────┐
+│ basic_category │        kategori         │   n   │
+│    varchar     │         varchar         │ int64 │
+├────────────────┼─────────────────────────┼───────┤
+│ restaurant     │ restaurant              │    77 │
+│ restaurant     │ pizza_restaurant        │    23 │
+│ restaurant     │ sushi_restaurant        │    11 │
+│ restaurant     │ indian_restaurant       │     8 │
+│ restaurant     │ scandinavian_restaurant │     6 │
+│ restaurant     │ italian_restaurant      │     5 │
+│ restaurant     │ mexican_restaurant      │     5 │
+│ restaurant     │ thai_restaurant         │     5 │
+│ restaurant     │ asian_restaurant        │     4 │
+│ restaurant     │ burger_restaurant       │     4 │
+├────────────────┴─────────────────────────┴───────┤
+│ 10 rows                                3 columns │
+└──────────────────────────────────────────────────┘
+
+-rw-r--r--  1 alexandesn  staff  12646 Nov  2 22:42 restauranter.parquet</pre></div></div></div><div class="prose"><p>Hentingen ga 179 restauranter. Til slutt sjekker jeg at filen har GeoParquet-metadata.</p></div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>uv run --with duckdb python -c &quot;
+import duckdb
+c=duckdb.connect();c.execute(&#x27;INSTALL spatial;LOAD spatial&#x27;)
+print(c.sql(\&quot;select decode(value)[:300] from parquet_kv_metadata(&#x27;restauranter.parquet&#x27;) where decode(key)=&#x27;geo&#x27;\&quot;).fetchall())
+c.sql(\&quot;select navn,sted,ST_AsText(geometry) from &#x27;restauranter.parquet&#x27; limit 3\&quot;).show()&quot;; ogrinfo -so restauranter.parquet 2&gt;&amp;1 | head -6</pre></div><div class="out"><pre>[(&#x27;{&quot;version&quot;:&quot;1.0.0&quot;,&quot;primary_column&quot;:&quot;geometry&quot;,&quot;columns&quot;:{&quot;geometry&quot;:{&quot;encoding&quot;:&quot;WKB&quot;,&quot;geometry_types&quot;:[&quot;Point&quot;],&quot;bbox&quot;:[7.923927,58.10639078,8.0753294,58.2059139]}}}&#x27;,)]
+┌──────────────────────┬────────────────┬────────────────────────────────┐
+│         navn         │      sted      │      st_astext(geometry)       │
+│       varchar        │    varchar     │            varchar             │
+├──────────────────────┼────────────────┼────────────────────────────────┤
+│ Pizza House Hellemyr │ Kristiansand   │ POINT (7.923927 58.148288)     │
+│ Mat Til Deg          │ Kristiansand S │ POINT (7.93071 58.13623)       │
+│ Pizza Show Vågsbygd  │ Kristiansand S │ POINT (7.95947561 58.11981552) │
+└──────────────────────┴────────────────┴────────────────────────────────┘
+
+INFO: Open of `restauranter.parquet&#x27;
+      using driver `Parquet&#x27; successful.
+1: restauranter (Point)</pre></div></div></div><div class="prose"><p>Jeg hentet 179 restauranter fra Overture Maps og lagret dem i <code>restauranter.parquet</code>. Filen er på 12,6 kB og har GeoParquet-metadata (geometrikolonnen <code>geometry</code>, WKB-punkter). GDAL åpner den som et punktlag.</p>
+<p>Scriptet <code>hent_restauranter.py</code> gjør dette:</p>
+<ol><li><strong>Bbox:</strong> Den tar utstrekningen til <code>kommuner.gpkg</code> og transformerer den fra EPSG:25833 til WGS84, som gir 7,888, 58,091, 8,078, 58,207.</li><li><strong>Release:</strong> <code>catalog.json</code> på stac.overturemaps.org peker på siste release, som er <code>2026-10-21.0</code>. Scriptet henter bare <code>places/place</code>-collectionen derfra.</li><li><strong>Filvalg:</strong> Av alle parquet-filene i collectionen leser scriptet bare dem der item-bbox overlapper søkeområdet. Det ble 1 fil.</li><li><strong>Filter:</strong> DuckDB leser fra S3 og filtrerer på <code>bbox.xmin/xmax/ymin/ymax</code> før noe annet. Da hopper den over de row groups som ligger utenfor, i stedet for å laste hele filen på 730 MB. Deretter filtrerer den på <code>basic_category = &#x27;restaurant&#x27;</code>.</li></ol>
+<p>Kolonnene i filen er <code>id</code>, <code>navn</code>, <code>kategori</code>, <code>basic_category</code>, <code>confidence</code>, <code>adresse</code>, <code>sted</code> og <code>geometry</code>. Vanligste kategorier er <code>restaurant</code> (77), <code>pizza_restaurant</code> (23) og <code>sushi_restaurant</code> (11).</p>
+<p>I denne releasen heter kategorifeltet <code>taxonomy.primary</code>. <code>categories.primary</code> finnes ikke lenger, så eldre eksempler fra Overture feiler her.</p>
+<p>Geometrien er i WGS84 (EPSG:4326), mens de andre lagene dine er i EPSG:25833. Før du kobler dem må du enten transformere med <code>ST_Transform(geometry, &#x27;EPSG:4326&#x27;, &#x27;EPSG:25833&#x27;, always_xy := true)</code> eller reprojisere ved eksport.</p>
+<p>Bbox-en er for hele kommunelaget og ikke bare Kristiansand og Vennesla i seg selv. Hvis du vil ha restauranter helt nøyaktig innenfor kommunegrensene, kan jeg legge til et <code>ST_Intersects</code>-filter mot kommunepolygonene.</p></div></section>
+<section class="msg user"><div class="who">Deg</div><div class="prose"><p>Nå vil jeg finne hvor mange restauranter som er 475 meter innenfor en brannstasjon</p></div></section>
+<section class="msg asst"><div class="who">Claude</div><div class="tool"><div class="tool-head"><span class="name">Bash</span><span class="desc"></span></div><div class="term"><div class="cmd"><pre>cat &gt; restauranter_naer_brann.sql &lt;&lt;&#x27;EOF&#x27;
+INSTALL spatial; LOAD spatial;
+
+CREATE OR REPLACE TEMP VIEW rest AS
+SELECT id, navn, kategori,
+       ST_Transform(geometry, &#x27;EPSG:4326&#x27;, &#x27;EPSG:25833&#x27;, always_xy := true) AS geom
+FROM &#x27;restauranter.parquet&#x27;;
+CREATE OR REPLACE TEMP VIEW brann AS SELECT * FROM ST_Read(&#x27;brannstasjon.gpkg&#x27;);
+EOF
+uv run --with duckdb python -c &quot;
+import duckdb
+c=duckdb.connect()
+c.execute(open(&#x27;restauranter_naer_brann.sql&#x27;).read())
+q=&#x27;&#x27;&#x27;FROM rest r JOIN brann s ON ST_DWithin(r.geom, s.geom, 475)&#x27;&#x27;&#x27;
+print(&#x27;unike restauranter:&#x27;, c.sql(f&#x27;select count(distinct r.id) {q}&#x27;).fetchone()[0])
+c.sql(f&#x27;select s.navn brannstasjon, count(*) antall {q} group by all order by 1&#x27;).show()
+c.sql(f&#x27;select r.navn, r.kategori, s.navn brannstasjon, round(ST_Distance(r.geom,s.geom),1) avstand_m {q} order by avstand_m&#x27;).show()
+c.sql(&#x27;select s.navn, round(ST_X(s.geom)),round(ST_Y(s.geom)) from brann s&#x27;).show()
+&quot;</pre></div><div class="out"><pre>unike restauranter: 2
+┌────────────────┬────────┐
+│  brannstasjon  │ antall │
+│    varchar     │ int64  │
+├────────────────┼────────┤
+│ Brannstasjon A │      2 │
+└────────────────┴────────┘
+
+┌───────────────────────┬──────────────────┬────────────────┬───────────┐
+│         navn          │     kategori     │  brannstasjon  │ avstand_m │
+│        varchar        │     varchar      │    varchar     │  double   │
+├───────────────────────┼──────────────────┼────────────────┼───────────┤
+│ Nguyen&#x27;s Grim Kinamat │ asian_restaurant │ Brannstasjon A │     328.9 │
+│ Pizzabakeren Grim     │ pizza_restaurant │ Brannstasjon A │     353.9 │
+└───────────────────────┴──────────────────┴────────────────┴───────────┘
+
+┌────────────────┬─────────────────────┬─────────────────────┐
+│      navn      │ round(st_x(s.geom)) │ round(st_y(s.geom)) │
+│    varchar     │       double        │       double        │
+├────────────────┼─────────────────────┼─────────────────────┤
+│ Brannstasjon A │             86423.0 │           6466808.0 │
+│ Brannstasjon B │             93423.0 │           6469808.0 │
+│ Brannstasjon C │             97423.0 │           6463808.0 │
+└────────────────┴─────────────────────┴─────────────────────┘</pre></div></div></div><div class="prose"><p><strong>2 restauranter</strong> ligger innenfor 475 m fra en brannstasjon. Begge ligger ved Brannstasjon A.</p>
+<div class='tablewrap'><table><thead><tr><th>Restaurant</th><th>Kategori</th><th>Avstand</th></tr></thead><tbody><tr><td>Nguyen&#x27;s Grim Kinamat</td><td>asian_restaurant</td><td>328,9 m</td></tr><tr><td>Pizzabakeren Grim</td><td>pizza_restaurant</td><td>353,9 m</td></tr></tbody></table></div>
+<p>Brannstasjon B og C har ingen restauranter innenfor 475 m.</p>
+<p>Spørringen bruker <code>ST_DWithin(r.geom, s.geom, 475)</code>. Restaurantene er transformert fra EPSG:4326 til EPSG:25833 først, slik at 475 er meter. Hvis en restaurant lå innenfor rekkevidden til flere stasjoner, ville den bare vært talt én gang (<code>count(distinct id)</code>). Det skjedde ikke her.</p>
+<p>Brannstasjonene er syntetiske eksempeldata fra <code>lag_data.py</code>, mens restaurantene er ekte. Resultatet sier derfor ikke noe om reelle brannstasjoner i Kristiansand.</p>
+<p>Oppsettet med view-ene ligger i <code>restauranter_naer_brann.sql</code>. Selve telle-spørringen kjørte jeg direkte fra Python og lagret den ikke i filen.</p></div></section>
+<div class="foot">Eksportert fra Claude Code. Tenke-blokker er skjult som standard; åpne dem ved å trykke på «Tenkte».</div></div>
