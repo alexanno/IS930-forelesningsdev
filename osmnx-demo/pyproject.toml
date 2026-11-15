@@ -1,0 +1,16 @@
+[project]
+name = "osmnx-demo"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "folium>=0.20.0",
+    "ipykernel>=7.4.0",
+    "jupyter>=1.1.1",
+    "jupytext>=1.19.6",
+    "mapclassify>=2.11.0",
+    "matplotlib>=3.11.2",
+    "nbconvert>=7.17.2",
+    "nbformat>=5.11.1",
+    "osmnx>=2.1.1",
+    "scikit-learn>=1.9.1",
+]
