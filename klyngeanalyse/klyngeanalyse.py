@@ -97,7 +97,7 @@ plt.show()
 # ## 1. Nærhet: k nærmeste naboer (kNN)
 #
 # kNN-søk: for hvert punkt, finn de *k* nærmeste punktene. Avstanden her er **luftlinje**.
-# Langs vegnett eller i reisetid kan svaret bli et helt annet (se `kristiansand_osmnx.ipynb`).
+# Langs vegnett eller i reisetid kan svaret bli et helt annet (se `../osmnx-demo/kristiansand_osmnx.ipynb`).
 #
 # *Merk:* «kNN» brukes også om en klassifikasjonsmetode (*k-nearest neighbours classifier*:
 # et punkt får klassen til flertallet av de k nærmeste). Her bruker vi kNN som **søk** etter naboer.
