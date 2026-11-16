@@ -20,28 +20,25 @@
 # 2. **Tetthet**: hvor er det mest av noe? (rutenett og kernel density)
 # 3. **Klynger**: hvor ligger ting i grupper? (**DBSCAN**, og k-means som kontrast)
 #
-# Hver analyse vises i Python (geopandas / scikit-learn), som SQL for **PostGIS** og som SQL i **DuckDB**.
+# Hver analyse vises i Python (geopandas / scikit-learn), og som SQL for **PostGIS**.
 #
-# | | Python | PostGIS | DuckDB spatial |
-# |---|---|---|---|
-# | kNN | `NearestNeighbors`, `sjoin_nearest` | `<->` + `LATERAL` | vindusfunksjon (`QUALIFY`) |
-# | DBSCAN | `sklearn.cluster.DBSCAN` | `ST_ClusterDBSCAN` | **finnes ikke**, men kan bygges med rekursiv CTE |
-# | k-means | `sklearn.cluster.KMeans` | `ST_ClusterKMeans` | **finnes ikke** |
+# | | Python | PostGIS |
+# |---|---|---|
+# | kNN | `NearestNeighbors`, `sjoin_nearest` | `<->` + `LATERAL` |
+# | DBSCAN | `sklearn.cluster.DBSCAN` | `ST_ClusterDBSCAN` |
+# | k-means | `sklearn.cluster.KMeans` | `ST_ClusterKMeans` |
 #
 # **PostGIS er ikke installert her**, så PostGIS-eksemplene står som kodeblokker som ikke er kjørt.
-# DuckDB-eksemplene kjøres, og DBSCAN-varianten vår sjekkes mot scikit-learn.
 
 # %%
 from pathlib import Path
 
-import duckdb
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import osmnx as ox
 import pandas as pd
 from sklearn.cluster import DBSCAN, KMeans
-from sklearn.metrics import adjusted_rand_score
 from sklearn.neighbors import KernelDensity, NearestNeighbors
 
 ox.settings.use_cache = True
@@ -155,42 +152,6 @@ til_pub[["name_left", "name_pub", "avstand_m"]].sort_values("avstand_m").head(5)
 # JOIN servering b ON ST_DWithin(a.geom, b.geom, 150) AND a.id <> b.id
 # GROUP BY a.name;
 # ```
-
-# %% [markdown]
-# ### DuckDB
-#
-# DuckDB spatial har `ST_Distance` og `ST_DWithin`, men ingen `<->`-operator og ingen kNN-indeks
-# som i PostGIS. Da bruker vi en vindusfunksjon: rangér alle par etter avstand per punkt, behold de k første.
-# Det er en full krysskobling, O(n²), som er helt greit for noen tusen punkter, men ikke for millioner.
-
-# %%
-con = duckdb.connect()
-con.sql("INSTALL spatial; LOAD spatial;")
-punkter = servering[["id", "name", "amenity", "x", "y"]]  # DuckDB leser DataFrames direkte
-con.sql("CREATE TABLE servering AS SELECT id, name, amenity, ST_Point(x, y) AS geom FROM punkter")
-
-con.sql("""
-    SELECT a.name AS fra, b.name AS til,
-           round(ST_Distance(a.geom, b.geom)) AS avstand_m,
-           row_number() OVER (PARTITION BY a.id ORDER BY ST_Distance(a.geom, b.geom)) AS rang
-    FROM servering a
-    JOIN servering b ON a.id <> b.id
-    QUALIFY rang <= 3
-    ORDER BY a.id, rang
-    LIMIT 9
-""").df()
-
-# %% [markdown]
-# Sjekk at DuckDB og scikit-learn gir samme tredje-nærmeste avstand:
-
-# %%
-duck_k3 = con.sql("""
-    SELECT a.id, ST_Distance(a.geom, b.geom) AS d
-    FROM servering a JOIN servering b ON a.id <> b.id
-    QUALIFY row_number() OVER (PARTITION BY a.id ORDER BY ST_Distance(a.geom, b.geom)) = 3
-    ORDER BY a.id
-""").df()
-print("Samme avstand til nabo nr. 3:", np.allclose(duck_k3["d"], servering["avstand_nabo3"]))
 
 # %% [markdown]
 # ## 2. Tetthet: hvor er det mest?
@@ -350,103 +311,22 @@ plt.show()
 # og sammenlign gjerne med scikit-learn på samme data.
 
 # %% [markdown]
-# ### DuckDB
+# ### Klyngeomriss
 #
-# DuckDB spatial (versjon under) har `ST_DWithin` og `ST_Distance`, men **ingen** `ST_ClusterDBSCAN`
-# eller `ST_ClusterKMeans`. Vi sjekker:
+# Konveks omhylling rundt hver klynge, tilsvarende `ST_ConvexHull(ST_Collect(...))` i PostGIS:
 
 # %%
-print("duckdb", duckdb.__version__)
-con.sql("""
-    SELECT DISTINCT function_name FROM duckdb_functions()
-    WHERE function_name ILIKE '%cluster%' OR function_name ILIKE '%dbscan%' OR function_name ILIKE '%kmeans%'
-""").df()
-
-# %% [markdown]
-# Ingen treff. DBSCAN er likevel ren grafteori, og kan skrives i vanlig SQL:
-#
-# 1. **Naboer**: alle par innen `eps` (`ST_DWithin`).
-# 2. **Kjernepunkter**: punkter med minst `min_samples` naboer (inkl. seg selv).
-# 3. **Klynger**: sammenhengende grupper av kjernepunkter, via en **rekursiv CTE** som sprer en etikett langs nabokantene. Klyngens id er laveste punkt-id i gruppen.
-# 4. **Randpunkter**: ikke-kjerner med en kjerne i nærheten får klyngen til nærmeste kjernepunkt.
-# 5. **Støy**: resten (`NULL`).
-
-# %%
-def dbscan_duckdb(con, eps, min_samples):
-    """DBSCAN i ren SQL. Returnerer DataFrame med id og klynge (NULL = støy)."""
-    return con.sql(f"""
-        WITH RECURSIVE
-        kant AS (
-            SELECT a.id AS a, b.id AS b, ST_Distance(a.geom, b.geom) AS d
-            FROM servering a JOIN servering b ON ST_DWithin(a.geom, b.geom, {eps})
-        ),
-        kjerne AS (
-            SELECT a AS id FROM kant GROUP BY a HAVING count(*) >= {min_samples}
-        ),
-        kjerne_kant AS (
-            SELECT a, b FROM kant
-            WHERE a IN (SELECT id FROM kjerne) AND b IN (SELECT id FROM kjerne)
-        ),
-        -- spre etiketten fra hvert kjernepunkt langs kantene mellom kjernepunkter
-        rekke(id, etikett) AS (
-            SELECT id, id FROM kjerne
-            UNION
-            SELECT rekke.id, kjerne_kant.b
-            FROM rekke JOIN kjerne_kant ON kjerne_kant.a = rekke.etikett
-        ),
-        kjerne_klynge AS (
-            SELECT id, min(etikett) AS klynge FROM rekke GROUP BY id
-        ),
-        -- randpunkter: nærmeste kjernepunkt innen eps
-        rand AS (
-            SELECT kant.a AS id, kjerne_klynge.klynge,
-                   row_number() OVER (PARTITION BY kant.a ORDER BY kant.d) AS rang
-            FROM kant JOIN kjerne_klynge ON kjerne_klynge.id = kant.b
-            WHERE kant.a NOT IN (SELECT id FROM kjerne)
-        )
-        SELECT s.id,
-               coalesce(kk.klynge, r.klynge) AS klynge
-        FROM servering s
-        LEFT JOIN kjerne_klynge kk ON kk.id = s.id
-        LEFT JOIN rand r ON r.id = s.id AND r.rang = 1
-        ORDER BY s.id
-    """).df()
-
-
-duck = dbscan_duckdb(con, EPS, MIN_SAMPLES)
-duck["klynge"].value_counts(dropna=False).to_frame()
-
-# %% [markdown]
-# **Verifisering:** ARI (*adjusted Rand index*) er 1,0 når to klyngeinndelinger er identiske
-# (etikettene kan være nummerert ulikt). Randpunkter som ligger innen `eps` av flere klynger
-# er tvetydige, så metodene kan avvike litt der (ved `eps=75` havner ett eller to randpunkter i ulik klynge,
-# ARI ≈ 0,98). Kjernepunktene og antall klynger er like.
-
-# %%
-for eps, ms in [(75, 4), (150, 5), (300, 5)]:
-    sk = DBSCAN(eps=eps, min_samples=ms).fit_predict(XY)
-    dd = dbscan_duckdb(con, eps, ms)["klynge"].fillna(-1).to_numpy()
-    print(f"eps={eps:>3}, min_samples={ms}: sklearn {len(set(sk) - {-1})} klynger, "
-          f"DuckDB {len(set(dd) - {-1})} klynger, ARI = {adjusted_rand_score(sk, dd):.3f}")
-
-# %% [markdown]
-# Det er ikke raskt (kantene er O(n²) uten romlig indeks), men for noen tusen punkter går det fint,
-# og du får klyngene rett inn i en SQL-pipeline. For store datasett: bruk PostGIS, eller kjør
-# scikit-learn og skriv resultatet tilbake. Til slutt lagrer vi resultatet i en GeoPackage og lager
-# klyngeomriss (tilsvarer `ST_ConvexHull(ST_Collect(...))` i PostGIS):
-
-# %%
-servering["klynge_duckdb"] = duck["klynge"].to_numpy()
-omriss = (servering.dropna(subset=["klynge_duckdb"])
-          .dissolve(by="klynge_duckdb", aggfunc={"id": "size"})
+servering["klynge"] = np.where(db.labels_ == -1, np.nan, db.labels_)
+omriss = (servering.dropna(subset=["klynge"])
+          .dissolve(by="klynge", aggfunc={"id": "size"})
           .convex_hull.to_frame("geometry").set_geometry("geometry", crs=servering.crs)
           .reset_index())
 
 fig, ax = plt.subplots(figsize=(7, 6))
 omriss.plot(ax=ax, alpha=0.25, color=FARGER[1], edgecolor=FARGER[1])
 servering.plot(ax=ax, markersize=14, color=STOY)
-servering.dropna(subset=["klynge_duckdb"]).plot(ax=ax, markersize=22, color=FARGER[0])
-ax.set_title("Klyngeomriss (konveks omhylling) fra DuckDB-DBSCAN")
+servering.dropna(subset=["klynge"]).plot(ax=ax, markersize=22, color=FARGER[0])
+ax.set_title("Klyngeomriss (konveks omhylling) fra DBSCAN")
 ax.set_aspect("equal")
 plt.show()
 
@@ -468,4 +348,4 @@ plt.show()
 # 1. Endre `EPS` og `MIN_SAMPLES`. Hvordan endrer antall klynger og støy seg?
 # 2. Kjør DBSCAN på bare restauranter, og på bare kaféer. Ligger klyngene på samme sted?
 # 3. Bytt til `eksempeldata/bygg.gpkg` (500 jevnt spredte bygg). Finner DBSCAN klynger? Hva forteller det om data uten tydelig gruppering?
-# 4. Skriv `ST_ClusterWithin`-varianten i DuckDB. Hvordan skiller den seg fra DBSCAN?
+# 4. Skriv `ST_ClusterWithin`-varianten i Python (hint: sammenhengende komponenter i en graf der kantene er par innen 150 m). Hvordan skiller den seg fra DBSCAN?
