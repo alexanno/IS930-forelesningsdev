@@ -30,7 +30,7 @@
 # 3. Beregn bygningsskygge og andel sol per gatekant, per tidssteg
 # 4. Gi hver kant en retningsavhengig sol-kvalitet $q \in [0,1]$
 # 5. Generer mange kandidat-sløyfer via vektet korteste vei, filtrer og rangér
-# 6. Vis topp 3 på kart
+# 6. Lag statiske kartbilder (PNG) av topp 3 og eksporter alle gyldige ruter til GeoJSON
 #
 # > **Merk:** Første kjøring laster ned data fra Overpass og kan ta flere minutter. Svar caches i `cache/`.
 
@@ -154,7 +154,9 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import folium
+import contextily as ctx
+import geopandas as gpd
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import osmnx as ox
@@ -162,8 +164,8 @@ import pandas as pd
 import shapely
 from astral import Observer
 from astral.sun import azimuth, elevation
-from branca.colormap import linear
 from IPython.display import display
+from matplotlib.collections import LineCollection
 from pyproj import Transformer
 from shapely import affinity
 
@@ -591,77 +593,161 @@ print(f"Kriterium: {KRITERIUM}  |  {DATO} {KLOKKESLETT}")
 display(tabell)
 
 # %% [markdown]
-# ## 10. Kart
+# ## 10. Kart (statiske bilder)
 #
-# Hver kant fargelegges etter sol-kvalitet $q$ (viridis: lilla = skygge/uheldig retning, gul = sol/heldig retning). Skyggen ved starttidspunktet kan skrus på i lagkontrollen.
+# Kartene tegnes med matplotlib og `contextily` oppå **Kartverkets topografiske gråtonekart** (WMTS, `topograatone`). Gråtonene gir ro i bakgrunnen slik at rutefargene står tydelig frem. Hver kant på ruten fargelegges etter sol-kvalitet $q$ (viridis: lilla = skygge/uheldig retning, gul = sol/heldig retning), og piler viser løperetning. Skyggen ved starttidspunktet vises som blått overlegg.
+#
+# Kartfliser hentes fra `cache.kartverket.no` (åpne data, CC BY 4.0) og caches lokalt av contextily. Krever nettilgang første gang.
+#
+# Bildene lagres som PNG i `kart/`.
 
 # %%
-import geopandas as gpd
+GEOM_P = [H[u][v]["geom"] for u, v in E_LIST]
+FARGEKART = plt.get_cmap("viridis")
+KARTVERKET_GRATONE = ("https://cache.kartverket.no/v1/wmts/1.0.0/topograatone/default/"
+                      "webmercator/{z}/{y}/{x}.png")
+KRITERIE_TEKST = {"ansikt": "sol i ansiktet", "rygg": "sol i ryggen", "mest_sol": "mest sol"}
 
-GEOM_LL = {
-    i: g for i, g in enumerate(
-        gpd.GeoSeries([H[u][v]["geom"] for u, v in E_LIST], crs=CRS).to_crs(4326))
-}
-SKYGGE_GEOJSON = None
-if BRUK_SKYGGE and SKYGGE_LAG0 is not None:
-    SKYGGE_GEOJSON = gpd.GeoSeries([SKYGGE_LAG0.simplify(1.0)], crs=CRS).to_crs(4326).__geo_interface__
 
-fargeskala = linear.viridis.scale(0, 1)
-fargeskala.caption = f"Sol-kvalitet q ({KRITERIUM})"
+def rute_segmenter(r):
+    """Koordinater (projiserte meter) per kant, orientert i løperetning."""
+    seg = []
+    for u, v in zip(r["noder"][:-1], r["noder"][1:]):
+        c = np.array(H[u][v]["geom"].coords)
+        ux, uy = xy[u]
+        if math.hypot(*(c[0] - (ux, uy))) > math.hypot(*(c[-1] - (ux, uy))):
+            c = c[::-1]
+        seg.append(c)
+    return seg
 
 
 def tegn_kart(r, rang):
-    m = folium.Map(location=START, zoom_start=14, tiles="CartoDB positron")
-    ruta = folium.FeatureGroup(name=f"Rute {rang}")
-    for i, q, s in zip(r["ids"], r["q"], r["s"]):
-        koord = [(lat, lng) for lng, lat in GEOM_LL[int(i)].coords]
-        folium.PolyLine(koord, color=fargeskala(float(q)), weight=6, opacity=0.9,
-                        tooltip=f"q = {q:.2f}, sol = {s:.0%}").add_to(ruta)
-    ruta.add_to(m)
-    if SKYGGE_GEOJSON is not None:
-        folium.GeoJson(SKYGGE_GEOJSON, name=f"Skygge kl. {KLOKKESLETT}", show=False,
-                       style_function=lambda _: {"color": "#333", "weight": 0, "fillOpacity": 0.35}).add_to(m)
-    folium.Marker(START, tooltip="Start/mål", icon=folium.Icon(color="red", icon="play")).add_to(m)
-    fargeskala.add_to(m)
-    folium.LayerControl().add_to(m)
-    return m
+    seg = rute_segmenter(r)
+    alle = np.vstack(seg)
+    marg = 250.0
+    x0, y0 = alle.min(axis=0) - marg
+    x1, y1 = alle.max(axis=0) + marg
+    bredde, hoyde = x1 - x0, y1 - y0
+    side = max(bredde, hoyde)  # kvadratisk utsnitt
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
 
+    fig, ax = plt.subplots(figsize=(9, 9.5), dpi=150)
+    
+    # Skygge ved starttidspunktet som halvtransparent overlegg
+    if BRUK_SKYGGE and SKYGGE_LAG0 is not None:
+        gpd.GeoSeries([SKYGGE_LAG0]).plot(ax=ax, color="#1f2a44", alpha=0.28, linewidth=0, zorder=3)
 
-# %% [markdown]
-# ### Rute 1
+    # Rute: hvit kontur under, farget etter q over
+    ax.add_collection(LineCollection(seg, colors="white", linewidths=7.5,
+                                     capstyle="round", zorder=4))
+    ax.add_collection(LineCollection(seg, colors=FARGEKART(np.clip(r["q"], 0, 1)), linewidths=4.5,
+                                     capstyle="round", zorder=5))
 
-# %%
-kart = {}
-if valgt:
-    kart[1] = tegn_kart(valgt[0], 1)
-    display(kart[1])
+    # Retningspiler omtrent hver 400 m
+    kum, neste = 0.0, 200.0
+    for c in seg:
+        lengde = np.hypot(*np.diff(c, axis=0).T).sum()
+        if kum + lengde >= neste and len(c) >= 2:
+            p0, p1 = c[len(c) // 2 - 1], c[len(c) // 2]
+            ax.annotate("", xy=p1, xytext=p0, zorder=6,
+                        arrowprops=dict(arrowstyle="-|>", color="black", lw=1.2, mutation_scale=14))
+            neste += 400.0
+        kum += lengde
 
-# %% [markdown]
-# ### Rute 2
+    ax.plot(SX, SY, marker="o", ms=13, mfc="#d62728", mec="white", mew=2, zorder=7)
+    ax.annotate("Start/mål", (SX, SY), xytext=(10, 10), textcoords="offset points",
+                fontsize=10, weight="bold", zorder=8,
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.85))
 
-# %%
-if len(valgt) > 1:
-    kart[2] = tegn_kart(valgt[1], 2)
-    display(kart[2])
+    ax.set_xlim(cx - side / 2, cx + side / 2)
+    ax.set_ylim(cy - side / 2, cy + side / 2)
+    ax.set_aspect("equal")
+    ax.set_axis_off()
+    # Bakgrunnskart: Kartverkets topografiske gråtonekart (flisene hentes og caches av contextily)
+    ctx.add_basemap(ax, source=KARTVERKET_GRATONE, crs=CRS, zoom_adjust=1,
+                   attribution=False, zorder=0)
 
-# %% [markdown]
-# ### Rute 3
+    # Solpil (retning TIL sola) i hjørnet
+    az, el = AZ[0], EL[0]
+    px, py = cx - side / 2 + 0.08 * side, cy + side / 2 - 0.08 * side
+    if el >= MIN_SOL_HOYDE:
+        dx, dy = math.sin(math.radians(az)), math.cos(math.radians(az))
+        ax.annotate("", xy=(px + dx * 0.05 * side, py + dy * 0.05 * side), xytext=(px, py),
+                    arrowprops=dict(arrowstyle="-|>", color="#e69f00", lw=3, mutation_scale=22), zorder=9)
+        ax.text(px + 0.04 * side, py, f"Sola kl. {KLOKKESLETT}\nazimut {az:.0f}°, høyde {el:.0f}°",
+                ha="left", va="center", fontsize=9, zorder=9,
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.85))
+    else:
+        ax.text(px, py, f"Sola er nede kl. {KLOKKESLETT}", fontsize=9, zorder=9)
 
-# %%
-if len(valgt) > 2:
-    kart[3] = tegn_kart(valgt[2], 3)
-    display(kart[3])
+    sm = plt.cm.ScalarMappable(norm=plt.Normalize(0, 1), cmap=FARGEKART)
+    cb = fig.colorbar(sm, ax=ax, orientation="horizontal", fraction=0.035, pad=0.01, aspect=40)
+    cb.set_label(f"Sol-kvalitet q ({KRITERIE_TEKST[KRITERIUM]})")
+
+    ax.set_title(
+        f"Rute {rang}: {r['lengde'] / 1000:.1f} km, ca. {r['lengde'] * MIN_PER_METER:.0f} min",
+        fontsize=15, weight="bold", pad=26)
+    ax.text(
+        0.5, 1.012,
+        f"{KRITERIE_TEKST[KRITERIUM].capitalize()} · {DATO} kl. {KLOKKESLETT} · "
+        f"{100 * r['sol_pct']:.0f} % i sol · {r['svinger']} svinger",
+        transform=ax.transAxes, ha="center", va="bottom", fontsize=10, color="#444")
+    fig.text(0.99, 0.005, "Bakgrunnskart: © Kartverket (CC BY 4.0) · Skygge/gatenett: © OpenStreetMap-bidragsytere", ha="right", fontsize=7, color="#777")
+    return fig
+
 
 # %%
 from pathlib import Path
 
-Path("kart").mkdir(exist_ok=True)
-for rang, m in kart.items():
-    m.save(f"kart/sunrun_{KRITERIUM}_{rang}.html")
-print("Lagret kart i kart/")
+UT_MAPPE = Path("kart")
+UT_MAPPE.mkdir(exist_ok=True)
+for rang, r in enumerate(valgt, start=1):
+    fig = tegn_kart(r, rang)
+    fig.savefig(UT_MAPPE / f"sunrun_{KRITERIUM}_{rang}.png", dpi=200, bbox_inches="tight",
+                facecolor="white")
+    plt.show()
+    plt.close(fig)
+print(f"Lagret {len(valgt)} kart i {UT_MAPPE}/")
 
 # %% [markdown]
-# ## 11. Begrensninger og veien videre
+# ## 11. Eksport av alle ruter til GeoJSON
+#
+# Alle **gyldige** kandidatruter (ikke bare topp 3) eksporteres som én `FeatureCollection` med `LineString`-geometri i WGS84 (EPSG:4326), sortert etter sol-kvalitet. `valgt = true` markerer de rutene som er vist på kartene over.
+
+# %%
+import json
+
+valgt_ids = {id(r) for r in valgt}
+features = []
+linjer_p = [shapely.LineString(np.vstack(rute_segmenter(r))) for r in resultater]
+linjer_ll = gpd.GeoSeries(linjer_p, crs=CRS).to_crs(4326)
+for rang, (r, linje) in enumerate(zip(resultater, linjer_ll), start=1):
+    features.append({
+        "type": "Feature",
+        "geometry": shapely.geometry.mapping(shapely.set_precision(linje, 1e-6)),
+        "properties": {
+            "rang": rang,
+            "valgt": id(r) in valgt_ids,
+            "kriterium": KRITERIUM,
+            "dato": DATO,
+            "klokkeslett": KLOKKESLETT,
+            "lengde_km": round(r["lengde"] / 1000, 3),
+            "tid_min": round(r["lengde"] * MIN_PER_METER, 1),
+            "sol_kvalitet": round(r["score"], 4),
+            "andel_sol": round(r["sol_pct"], 4),
+            "andel_sol_ansikt": round(r["ansikt_pct"], 4),
+            "andel_sol_rygg": round(r["rygg_pct"], 4),
+            "svinger": r["svinger"],
+        },
+    })
+
+geojson_fil = UT_MAPPE / f"sunrun_{KRITERIUM}_ruter.geojson"
+geojson_fil.write_text(json.dumps({"type": "FeatureCollection", "features": features},
+                                  ensure_ascii=False), encoding="utf-8")
+print(f"Eksporterte {len(features)} ruter til {geojson_fil}")
+
+# %% [markdown]
+# ## 12. Begrensninger og veien videre
 #
 # - **Skygge:** kun bygninger. Trær, terreng og lav sol bak åser ignoreres. Konvekst skrog overestimerer skygge for L-formede bygg.
 # - **Bygningshøyde:** mangler ofte i OSM, og standardhøyden (8 m) gir systematiske feil.
