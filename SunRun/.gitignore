@@ -1,0 +1,6 @@
+.venv/
+cache/
+kart/
+__pycache__/
+.ipynb_checkpoints/
+data/*.osm*

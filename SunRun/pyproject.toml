@@ -1,0 +1,14 @@
+[project]
+name = "sunrun"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "astral>=3.2",
+    "folium>=0.20.0",
+    "ipykernel>=7.4.0",
+    "jupyter>=1.1.1",
+    "jupytext>=1.19.6",
+    "matplotlib>=3.11.2",
+    "nbconvert>=7.17.2",
+    "osmnx>=2.1.1",
+]
